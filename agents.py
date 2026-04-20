@@ -11,6 +11,19 @@ load_dotenv()
 llm = ChatOpenAI(model = "gpt-4o-mini",temperature=0)
 
 
+classifier_prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a query router. Decide if a query needs deep research or can be answered directly.
+
+Reply with ONLY one of these two words:
+- SIMPLE  → for greetings, definitions, quick facts, math, basic how-to questions
+- RESEARCH → for topics needing current data, analysis, comparisons, trends, or detailed reports
+
+No explanation. One word only."""),
+    ("human", "Query: {query}")
+])
+
+classifier_chain = classifier_prompt | llm | StrOutputParser()
+
 #1st agent 
 def build_search_agent():
     return create_agent(

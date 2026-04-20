@@ -1,8 +1,34 @@
-from agents import build_reader_agent , build_search_agent , writer_chain , critic_chain
+# from agents import build_reader_agent , build_search_agent , writer_chain , critic_chain
+# from langchain_core.prompts import ChatPromptTemplate
+# from langchain_core.output_parsers import StrOutputParser
 
-def run_research_pipeline(topic : str) -> dict:
 
+# def run_research_pipeline(topic : str) -> dict:
+
+#     state = {}
+from agents import build_reader_agent, build_search_agent, writer_chain, critic_chain, classifier_chain, llm
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+# Simple direct-answer chain
+direct_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant. Answer the user's question clearly and concisely."),
+    ("human", "{query}")
+])
+direct_chain = direct_prompt | llm | StrOutputParser()
+
+def run_research_pipeline(topic: str) -> dict:
     state = {}
+
+    # ── Classify query first ──
+    query_type = classifier_chain.invoke({"query": topic}).strip().upper()
+    state["query_type"] = query_type
+
+    if query_type == "SIMPLE":
+        print("\n[Router] Simple query detected. Skipping deep research.")
+        state["direct_answer"] = direct_chain.invoke({"query": topic})
+        return state
+    # ... rest of your existing pipeline unchanged
 
     #search agent working 
     print("\n"+" ="*50)
