@@ -10,10 +10,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-headers = {
-    "authorization": st.secrets["TAVILY_API_KEY" , "OPENAI_API_KEY"],
-}
-
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
