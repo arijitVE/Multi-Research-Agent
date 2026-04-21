@@ -12,20 +12,25 @@ load_dotenv()
 # if not api_key:
 #     raise ValueError("TAVILY_API_KEY not found in environment variables")
 # tavily = TavilyClient(api_key=api_key)
-def get_api_key():
-    import os
-    
-    # Try Streamlit secrets safely
+def get_api_key() -> str:
+    """Resolve TAVILY_API_KEY — works both locally and on Streamlit Cloud."""
+    # 1. Try Streamlit secrets (only available after app starts)
     try:
         import streamlit as st
-        if hasattr(st, "secrets"):
-            return st.secrets.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY")
+        key = st.secrets.get("TAVILY_API_KEY")
+        if key:
+            return key
     except Exception:
         pass
-
-    # Fallback to environment variable
-    return os.getenv("TAVILY_API_KEY")
-
+ 
+    # 2. Fallback to .env / system environment
+    key = os.getenv("TAVILY_API_KEY")
+    if key:
+        return key
+ 
+    raise ValueError(
+        "TAVILY_API_KEY not found. Add it to Streamlit secrets or your .env file."
+    )
 
 def get_tavily_client():
     return TavilyClient(api_key=get_api_key())
@@ -34,7 +39,8 @@ tavily = get_tavily_client()
 @tool
 def web_search(query : str) -> str:
     """Search the web for recent and reliable information on a topic , Returns Titles , URLs and snippts"""
-    results = tavily.search(query=query , max_results= 5)
+    tavily = TavilyClient(api_key=get_api_key())
+    results = tavily.search(query=query, max_results=5)
 
     out = []
 
