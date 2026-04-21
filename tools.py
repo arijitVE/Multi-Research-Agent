@@ -8,10 +8,28 @@ from rich import print
 import random
 load_dotenv()
 
-api_key = os.getenv("TAVILY_API_KEY")
-if not api_key:
-    raise ValueError("TAVILY_API_KEY not found in environment variables")
-tavily = TavilyClient(api_key=api_key)
+# api_key = os.getenv("TAVILY_API_KEY")
+# if not api_key:
+#     raise ValueError("TAVILY_API_KEY not found in environment variables")
+# tavily = TavilyClient(api_key=api_key)
+def get_api_key():
+    import os
+    
+    # Try Streamlit secrets safely
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            return st.secrets.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY")
+    except Exception:
+        pass
+
+    # Fallback to environment variable
+    return os.getenv("TAVILY_API_KEY")
+
+
+def get_tavily_client():
+    return TavilyClient(api_key=get_api_key())
+tavily = get_tavily_client()  
 
 @tool
 def web_search(query : str) -> str:
@@ -26,7 +44,7 @@ def web_search(query : str) -> str:
         )
     return "\n-----\n".join(out)
 
-
+# print(web_search.invoke("What are the latest trends in renewable energy?"))
 @tool
 def web_scrape(url : str) -> str:
     """Scrape and return clean text content from a given URL for deeper reading."""

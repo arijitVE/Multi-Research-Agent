@@ -4,11 +4,28 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from tools import web_search , web_scrape 
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 
 #model setup 
-llm = ChatOpenAI(model = "gpt-4o-mini",temperature=0)
+# llm = ChatOpenAI(model = "gpt-4o-mini",temperature=0)
+
+def get_openai_api_key():
+    try:
+        import streamlit as st
+        return st.secrets["OPENAI_API_KEY"]
+    except Exception:
+        pass
+
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not found in Streamlit secrets or environment variables")
+
+    return api_key
+
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=get_openai_api_key())
 
 
 classifier_prompt = ChatPromptTemplate.from_messages([
