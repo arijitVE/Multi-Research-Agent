@@ -57,9 +57,16 @@ html, body, [class*="css"] {
     border-radius: 16px; padding: 2rem 2.5rem; margin-bottom: 2rem;
     backdrop-filter: blur(8px);
 }
+/* Style the input+button block via the column container */
+[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlock"]:first-child {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,140,50,0.15);
+    border-radius: 16px;
+    padding: 1.5rem;
+}
 .stTextInput > div > div > input {
-    background: rgba(255,255,255,0.05) !important;
-    border: 1px solid rgba(255,140,50,0.25) !important;
+    background: #1c1c24 !important;
+    border: 1px solid rgba(255,140,50,0.35) !important;
     border-radius: 10px !important; color: #f0ebe0 !important;
     font-family: 'DM Sans', sans-serif !important; font-size: 1rem !important;
     padding: 0.75rem 1rem !important;
@@ -80,7 +87,7 @@ html, body, [class*="css"] {
     color: #ff8c32 !important; font-weight: 500 !important;
 }
 .stTextArea textarea {
-    background: rgba(255,255,255,0.05) !important;
+    background: #1c1c24 !important;
     border: 1px solid rgba(255,140,50,0.25) !important;
     border-radius: 10px !important; color: #f0ebe0 !important;
     font-family: 'DM Sans', sans-serif !important; font-size: 0.95rem !important;
@@ -133,7 +140,7 @@ html, body, [class*="css"] {
     border-bottom: 1px solid rgba(255,140,50,0.15);
 }
 .result-content {
-    font-size: 0.92rem; line-height: 1.8; color: #cdc8bf;
+    font-size: 0.92rem; line-height: 1.8; color: #e8e4dc;
     white-space: pre-wrap; font-family: 'DM Sans', sans-serif;
 }
 .report-panel {
@@ -166,6 +173,13 @@ html, body, [class*="css"] {
 }
 
 .stSpinner > div { color: #ff8c32 !important; }
+/* Ensure all markdown output text is bright enough to read */
+.report-panel p, .report-panel li, .report-panel h1, .report-panel h2, .report-panel h3,
+.feedback-panel p, .feedback-panel li,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li {
+    color: #e8e4dc !important;
+}
 details summary {
     font-family: 'DM Mono', monospace !important; font-size: 0.75rem !important;
     color: #a09890 !important; letter-spacing: 0.1em !important; cursor: pointer;
@@ -244,7 +258,6 @@ st.markdown("""
 col_input, col_spacer, col_pipeline = st.columns([5, 0.5, 4])
 
 with col_input:
-    st.markdown('<div class="input-card">', unsafe_allow_html=True)
     topic = st.text_input(
         "Research Topic",
         placeholder="e.g. Quantum computing breakthroughs in 2025",
@@ -252,7 +265,6 @@ with col_input:
         label_visibility="visible",
     )
     run_btn = st.button("⚡  Run Research Pipeline", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("""
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
