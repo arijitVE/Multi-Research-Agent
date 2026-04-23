@@ -1,10 +1,9 @@
 import streamlit as st
 import time
-import json
-import uuid
-import os
-from agents import build_reader_agent, build_search_agent, writer_chain, critic_chain, classifier_chain, llm
-from pipeline import direct_chain
+from agents import llm
+from db.database import init_db
+from services.research_service import run_research, send_chat_message
+from services.session_service import clear_chat_history, delete_session, get_all_sessions, get_session
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -17,46 +16,28 @@ st.set_page_config(
 )
 
 # ── Persistent storage helpers ────────────────────────────────────────────────
-HISTORY_FILE = "research_history.json"
+init_db()
 
-def load_all_sessions() -> list:
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
 
-def save_session(session: dict):
-    sessions = load_all_sessions()
-    for i, s in enumerate(sessions):
-        if s["id"] == session["id"]:
-            sessions[i] = session
-            break
+def build_results_from_session(session):
+    results = {"query_type": session.query_type}
+    if session.query_type == "SIMPLE":
+        results["direct_answer"] = session.report or ""
     else:
-        sessions.insert(0, session)
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(sessions, f, indent=2)
+        if session.report:
+            results["writer"] = session.report
+        if session.feedback:
+            results["critic"] = session.feedback
+    return results
 
-def delete_session(session_id: str):
-    sessions = [s for s in load_all_sessions() if s["id"] != session_id]
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(sessions, f, indent=2)
 
-def get_session(session_id: str):
-    for s in load_all_sessions():
-        if s["id"] == session_id:
-            return s
-    return None
-
-def restore_session(session: dict):
-    topic = session.get("topic", "")
-    chat_history = session.get("chat_history", [])
+def restore_session(session):
+    topic = session.topic or ""
+    chat_history = [{"role": m.role, "content": m.content} for m in session.messages]
     st.session_state.update({
-        "results":           session.get("results", {}),
+        "results":           build_results_from_session(session),
         "chat_history":      chat_history,
-        "active_session_id": session.get("id"),
+        "active_session_id": session.id,
         "done":              True,
         "running":           False,
         "action_result":     None,
@@ -70,7 +51,7 @@ def restore_session(session: dict):
     })
 
 def fmt_date(ts):
-    return time.strftime("%b %d, %Y", time.localtime(ts))
+    return ts.strftime("%b %d, %Y")
 
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
@@ -245,15 +226,15 @@ with st.sidebar:
         })
         st.rerun()
 
-    all_sessions = load_all_sessions()
+    all_sessions = get_all_sessions()
 
     if all_sessions:
         st.markdown('<div class="sidebar-section-label">Research History</div>', unsafe_allow_html=True)
         for sess in all_sessions:
-            sid       = sess["id"]
-            title     = sess.get("topic", "Untitled")[:36]
-            date_str  = fmt_date(sess.get("ts", 0))
-            n_chat    = len(sess.get("chat_history", [])) // 2
+            sid       = sess.id
+            title     = (sess.topic or "Untitled")[:36]
+            date_str  = fmt_date(sess.ts)
+            n_chat    = len(sess.messages)
             is_active = sid == st.session_state.active_session_id
             meta = f"{date_str} · {n_chat} msg" if n_chat else date_str
             button_label = f"● {title}" if is_active else f"🔬 {title}"
@@ -334,12 +315,11 @@ if run_btn:
     if not topic.strip():
         st.warning("Please enter a research topic first.")
     else:
-        new_id = str(uuid.uuid4())
         st.session_state.update({
             "results": {}, "running": True, "done": False,
             "action_result": None, "action_label": "", "action_running": False,
             "chat_open": False, "chat_history": [],
-            "active_session_id": new_id, "_current_topic": topic.strip(),
+            "active_session_id": None, "_current_topic": topic.strip(),
             "_pending_action": "", "_pending_chat_q": "",
         })
         st.rerun()
@@ -347,52 +327,15 @@ if run_btn:
 
 # ── Execute pipeline ──────────────────────────────────────────────────────────
 if st.session_state.running and not st.session_state.done:
-    results   = {}
     topic_val = st.session_state.topic_input
 
-    with st.spinner("🤔 Analysing your query…"):
-        query_type = classifier_chain.invoke({"query": topic_val}).strip().upper()
-        results["query_type"] = query_type
-
-    if query_type == "SIMPLE":
-        with st.spinner("💬 Answering directly…"):
-            results["direct_answer"] = direct_chain.invoke({"query": topic_val})
-        st.session_state.results = dict(results)
-        st.session_state.running = False
-        st.session_state.done    = True
-        save_session({"id": st.session_state.active_session_id,
-                      "topic": st.session_state._current_topic,
-                      "ts": time.time(), "results": dict(results), "chat_history": []})
-        st.rerun()
-    else:
-        with st.spinner("🔍 Search Agent is working…"):
-            sr = build_search_agent().invoke({"messages":[("user",f"Find recent, reliable and detailed information about: {topic_val}")]})
-            results["search"] = sr["messages"][-1].content
-            st.session_state.results = dict(results)
-
-        with st.spinner("📄 Reader Agent is scraping top resources…"):
-            rr = build_reader_agent().invoke({"messages":[("user",
-                f"Based on the following search results about '{topic_val}', "
-                f"pick the most relevant URL and scrape it for deeper content.\n\nSearch Results:\n{results['search'][:800]}")]})
-            results["reader"] = rr["messages"][-1].content
-            st.session_state.results = dict(results)
-
-        with st.spinner("✍️ Writer is drafting the report…"):
-            results["writer"] = writer_chain.invoke({
-                "topic": topic_val,
-                "research": f"SEARCH RESULTS:\n{results['search']}\n\nDETAILED SCRAPED CONTENT:\n{results['reader']}"})
-            st.session_state.results = dict(results)
-
-        with st.spinner("🧐 Critic is reviewing the report…"):
-            results["critic"] = critic_chain.invoke({"report": results["writer"]})
-            st.session_state.results = dict(results)
-
-        st.session_state.running = False
-        st.session_state.done    = True
-        save_session({"id": st.session_state.active_session_id,
-                      "topic": st.session_state._current_topic,
-                      "ts": time.time(), "results": dict(results), "chat_history": []})
-        st.rerun()
+    with st.spinner("Running research pipeline..."):
+        result = run_research(topic_val)
+    st.session_state.results = dict(result["state"])
+    st.session_state.active_session_id = result["session_id"]
+    st.session_state.running = False
+    st.session_state.done    = True
+    st.rerun()
 
 
 # ── Results display ───────────────────────────────────────────────────────────
@@ -542,32 +485,23 @@ if r:
             # Execute chat turn
             if st.session_state.action_running and st.session_state.chat_open and st.session_state._pending_chat_q:
                 pq = st.session_state._pending_chat_q
-                lc_hist = [("human" if m["role"]=="user" else "assistant", m["content"])
-                           for m in st.session_state.chat_history]
                 with st.spinner("Thinking…"):
-                    from agents import chat_chain
-                    response = chat_chain.invoke({"report": base_content, "history": lc_hist, "question": pq})
+                    response = send_chat_message(
+                        session_id=st.session_state.active_session_id,
+                        question=pq,
+                        report=base_content,
+                    )
                 st.session_state.chat_history.append({"role":"user",      "content": pq})
                 st.session_state.chat_history.append({"role":"assistant",  "content": response})
                 st.session_state.action_running   = False
                 st.session_state._pending_chat_q  = ""
-
-                # Persist updated chat to disk
-                if st.session_state.active_session_id:
-                    sess = get_session(st.session_state.active_session_id)
-                    if sess:
-                        sess["chat_history"] = st.session_state.chat_history
-                        save_session(sess)
                 st.rerun()
 
             if st.session_state.chat_history:
                 if st.button("🗑 Clear chat", key="clear_chat"):
                     st.session_state.chat_history = []
                     if st.session_state.active_session_id:
-                        sess = get_session(st.session_state.active_session_id)
-                        if sess:
-                            sess["chat_history"] = []
-                            save_session(sess)
+                        clear_chat_history(st.session_state.active_session_id)
                     st.rerun()
 
 
