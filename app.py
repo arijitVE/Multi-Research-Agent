@@ -2,7 +2,7 @@ import streamlit as st
 import time
 from agents import llm
 from db.database import init_db
-from services.research_service import run_research, send_chat_message
+from services.research_service import improve_report, run_research, send_chat_message
 from services.session_service import clear_chat_history, delete_session, get_all_sessions, get_session
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -21,13 +21,20 @@ init_db()
 
 def build_results_from_session(session):
     results = {"query_type": session.query_type}
+    latest_version = session.versions[-1] if getattr(session, "versions", None) else None
     if session.query_type == "SIMPLE":
         results["direct_answer"] = session.report or ""
     else:
         if session.report:
             results["writer"] = session.report
+            results["report"] = session.report
         if session.feedback:
             results["critic"] = session.feedback
+            results["feedback"] = session.feedback
+    results["current_version"] = session.current_version or 1
+    if latest_version is not None:
+        results["evaluator_score"] = latest_version.evaluator_score
+        results["evaluator_passed"] = latest_version.evaluator_passed
     return results
 
 
@@ -48,6 +55,8 @@ def restore_session(session):
         "_current_topic":    topic,
         "_pending_action":   "",
         "_pending_chat_q":   "",
+        "show_improve_input": False,
+        "_improve_instructions": "",
     })
 
 def fmt_date(ts):
@@ -120,6 +129,48 @@ html, body, [class*="css"] { font-family:'DM Sans',sans-serif; color:#e8e4dc; }
 .stButton > button { background:linear-gradient(135deg,#ff8c32 0%,#ff5a1a 100%) !important; color:#0a0a0f !important; font-family:'Syne',sans-serif !important; font-weight:700 !important; font-size:0.95rem !important; letter-spacing:0.04em !important; border:none !important; border-radius:10px !important; padding:0.7rem 2.2rem !important; cursor:pointer !important; transition:transform 0.15s,box-shadow 0.15s,opacity 0.15s !important; box-shadow:0 4px 20px rgba(255,140,50,0.3) !important; width:100%; }
 .stButton > button:hover  { transform:translateY(-2px) !important; box-shadow:0 8px 28px rgba(255,140,50,0.4) !important; opacity:0.95 !important; }
 .stButton > button:active { transform:translateY(0) !important; }
+.stButton > button[kind="secondary"] {
+    background:transparent !important;
+    border:0.5px solid rgba(255,255,255,0.2) !important;
+    border-radius:8px !important;
+    color:rgba(255,255,255,0.85) !important;
+    font-family:'DM Sans',sans-serif !important;
+    font-weight:500 !important;
+    font-size:0.84rem !important;
+    letter-spacing:0 !important;
+    padding:0.5rem 0.85rem !important;
+    height:auto !important;
+    box-shadow:none !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    background:rgba(255,255,255,0.06) !important;
+    border-color:rgba(255,255,255,0.35) !important;
+    box-shadow:none !important;
+    transform:none !important;
+    opacity:1 !important;
+}
+.stButton > button[kind="secondary"]:active {
+    transform:none !important;
+}
+.stButton > button[kind="tertiary"] {
+    background:transparent !important;
+    border:0.5px solid rgba(255,255,255,0.12) !important;
+    border-radius:8px !important;
+    color:rgba(255,255,255,0.72) !important;
+    font-family:'DM Sans',sans-serif !important;
+    font-weight:500 !important;
+    font-size:0.82rem !important;
+    letter-spacing:0 !important;
+    padding:0.45rem 0.8rem !important;
+    box-shadow:none !important;
+}
+.stButton > button[kind="tertiary"]:hover {
+    background:rgba(255,255,255,0.05) !important;
+    border-color:rgba(255,255,255,0.24) !important;
+    box-shadow:none !important;
+    transform:none !important;
+    opacity:1 !important;
+}
 
 /* Pipeline */
 .step-card { background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:1.5rem 1.8rem; margin-bottom:1.2rem; position:relative; overflow:hidden; transition:border-color 0.3s; }
@@ -147,6 +198,7 @@ html, body, [class*="css"] { font-family:'DM Sans',sans-serif; color:#e8e4dc; }
 /* Action bar */
 .action-bar       { background:rgba(255,255,255,0.02); border:1px solid rgba(255,140,50,0.12); border-radius:14px; padding:1.5rem 2rem; margin-top:1.5rem; }
 .action-bar-title { font-family:'DM Mono',monospace; font-size:0.7rem; letter-spacing:0.2em; text-transform:uppercase; color:#ff8c32; margin-bottom:1rem; }
+.action-row-gap { margin-top:0.6rem; }
 
 /* Chat */
 .chat-container { background:rgba(255,255,255,0.02); border:1px solid rgba(255,140,50,0.2); border-radius:16px; overflow:hidden; margin-top:1rem; }
@@ -167,6 +219,18 @@ html, body, [class*="css"] { font-family:'DM Sans',sans-serif; color:#e8e4dc; }
 
 /* Misc */
 .stSpinner > div { color:#ff8c32 !important; }
+.report-content p, .report-content li,
+.element-container p, .element-container li {
+    color:rgba(255,255,255,0.88) !important;
+    line-height:1.75 !important;
+    font-size:15px !important;
+}
+.report-content h1, .report-content h2, .report-content h3,
+.element-container h1, .element-container h2, .element-container h3 {
+    color:rgba(255,255,255,0.95) !important;
+    font-weight:500 !important;
+    margin-top:1.4rem !important;
+}
 .report-panel p,.report-panel li,.report-panel h1,.report-panel h2,.report-panel h3,
 .feedback-panel p,.feedback-panel li,
 [data-testid="stMarkdownContainer"] p,
@@ -174,6 +238,50 @@ html, body, [class*="css"] { font-family:'DM Sans',sans-serif; color:#e8e4dc; }
 details summary { font-family:'DM Mono',monospace !important; font-size:0.75rem !important; color:#a09890 !important; letter-spacing:0.1em !important; cursor:pointer; }
 .section-heading { font-family:'Syne',sans-serif; font-size:1.3rem; font-weight:700; color:#f0ebe0; margin:2rem 0 1rem; }
 .notice { font-family:'DM Mono',monospace; font-size:0.72rem; color:#605850; text-align:center; margin-top:3rem; letter-spacing:0.08em; }
+
+/* Sidebar session cards */
+section[data-testid="stSidebar"] .stButton > button[kind="secondary"],
+section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    background:transparent !important;
+    border:0.5px solid rgba(255,255,255,0.12) !important;
+    border-radius:8px !important;
+    text-align:left !important;
+    padding:10px 12px !important;
+    font-size:13px !important;
+    line-height:1.5 !important;
+    color:rgba(255,255,255,0.85) !important;
+    white-space:pre-wrap !important;
+    height:auto !important;
+    min-height:52px !important;
+    box-shadow:none !important;
+    font-family:'DM Sans',sans-serif !important;
+    font-weight:500 !important;
+    letter-spacing:0 !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover,
+section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+    background:rgba(255,255,255,0.06) !important;
+    border-color:rgba(255,255,255,0.25) !important;
+    transform:none !important;
+    opacity:1 !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    border-color:#d85a30 !important;
+    background:rgba(216,90,48,0.08) !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="tertiary"] {
+    min-height:36px !important;
+    padding:4px 8px !important;
+    font-size:12px !important;
+    color:rgba(255,255,255,0.4) !important;
+    border-color:transparent !important;
+    width:100% !important;
+}
+section[data-testid="stSidebar"] .stButton > button[kind="tertiary"]:hover {
+    color:#e24b4a !important;
+    border-color:rgba(226,75,74,0.3) !important;
+    background:rgba(226,75,74,0.08) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -208,6 +316,8 @@ for key, default in [
     ("_current_topic",    ""),
     ("_pending_action",   ""),
     ("_pending_chat_q",   ""),
+    ("show_improve_input", False),
+    ("_improve_instructions", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -217,12 +327,13 @@ for key, default in [
 with st.sidebar:
     st.markdown('<div class="sidebar-logo">Research<span>Mind</span></div>', unsafe_allow_html=True)
 
-    if st.button("＋  New Research", use_container_width=True, key="new_btn"):
+    if st.button("＋  New Research", use_container_width=True, key="new_btn", type="primary"):
         st.session_state.update({
             "results": {}, "running": False, "done": False,
             "action_result": None, "action_label": "", "action_running": False,
             "chat_open": False, "chat_history": [], "active_session_id": None,
             "topic_input": "", "_current_topic": "", "_pending_action": "", "_pending_chat_q": "",
+            "show_improve_input": False, "_improve_instructions": "",
         })
         st.rerun()
 
@@ -232,29 +343,36 @@ with st.sidebar:
         st.markdown('<div class="sidebar-section-label">Research History</div>', unsafe_allow_html=True)
         for sess in all_sessions:
             sid       = sess.id
-            title     = (sess.topic or "Untitled")[:36]
+            full_title = sess.topic or "Untitled"
+            title     = full_title[:32] + ("..." if len(full_title) > 32 else "")
             date_str  = fmt_date(sess.ts)
-            n_chat    = len(sess.messages)
+            n_chat    = len(sess.messages) // 2
             is_active = sid == st.session_state.active_session_id
-            meta = f"{date_str} · {n_chat} msg" if n_chat else date_str
-            button_label = f"● {title}" if is_active else f"🔬 {title}"
+            meta = f"{date_str} · {n_chat} msgs"
+            if getattr(sess, "current_version", 1) > 1:
+                meta += f" · v{sess.current_version}"
 
             col_load, col_del = st.columns([5, 1])
             with col_load:
-                if st.button(button_label, key=f"load_{sid}", use_container_width=True, help=meta):
+                if st.button(
+                    f"{title}\n{meta}",
+                    key=f"open_{sid}",
+                    use_container_width=True,
+                    type="primary" if is_active else "secondary",
+                ):
                     loaded = get_session(sid)
                     if loaded:
                         restore_session(loaded)
                         st.rerun()
-                st.markdown(f'<div class="history-item-meta">{meta}</div>', unsafe_allow_html=True)
             with col_del:
-                if st.button("🗑", key=f"del_{sid}", help="Delete"):
+                if st.button("✕", key=f"del_{sid}", help="Delete", type="tertiary"):
                     delete_session(sid)
                     if st.session_state.active_session_id == sid:
                         st.session_state.update({
                             "results": {}, "done": False,
                             "chat_history": [], "active_session_id": None,
                             "topic_input": "", "_current_topic": "",
+                            "show_improve_input": False, "_improve_instructions": "",
                         })
                     st.rerun()
     else:
@@ -282,7 +400,7 @@ with col_input:
     topic = st.text_input("Research Topic",
         placeholder="e.g. Quantum computing breakthroughs in 2025",
         key="topic_input", label_visibility="visible")
-    run_btn = st.button("⚡  Run Research Pipeline", use_container_width=True)
+    run_btn = st.button("⚡  Run Research Pipeline", use_container_width=True, type="primary")
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("""<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1.5rem;">
@@ -321,6 +439,7 @@ if run_btn:
             "chat_open": False, "chat_history": [],
             "active_session_id": None, "_current_topic": topic.strip(),
             "_pending_action": "", "_pending_chat_q": "",
+            "show_improve_input": False, "_improve_instructions": "",
         })
         st.rerun()
 
@@ -361,17 +480,29 @@ if r:
             st.markdown('</div>', unsafe_allow_html=True)
             st.download_button("⬇  Download Report (.md)", data=r["writer"],
                 file_name=f"research_report_{int(time.time())}.md", mime="text/markdown")
+            badges = []
+            evaluator_score = r.get("evaluator_score")
+            current_version = r.get("current_version") or 1
+            if evaluator_score is not None:
+                color = "🟢" if r.get("evaluator_passed") else "🟡"
+                badges.append(f"{color} Quality score: {evaluator_score}/100")
+            if current_version > 1:
+                badges.append(f"📝 v{current_version}")
+            if badges:
+                st.caption("  ·  ".join(badges))
+            st.divider()
         if "critic" in r:
             st.markdown('<div class="feedback-panel"><div class="panel-label green">🧐 Critic Feedback</div>', unsafe_allow_html=True)
             st.markdown(r["critic"])
             st.markdown('</div>', unsafe_allow_html=True)
+            st.divider()
 
     # ── Action bar ────────────────────────────────────────────────────────────
     base_content = r.get("writer") or r.get("direct_answer","")
 
     if base_content:
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="action-bar"><div class="action-bar-title">⚡ What do you want to do next?</div>', unsafe_allow_html=True)
+        st.markdown("#### What do you want to do next?")
+        st.markdown('<div class="action-bar">', unsafe_allow_html=True)
 
         locked = st.session_state.action_running
 
@@ -380,7 +511,7 @@ if r:
                 border-radius:10px;padding:0.7rem 1.2rem;margin-bottom:1rem;
                 font-family:'DM Mono',monospace;font-size:0.72rem;color:#ff6040;letter-spacing:0.08em;">
                 ⏳ ACTION RUNNING — stop it before starting a new one</div>""", unsafe_allow_html=True)
-            if st.button("⛔  Stop current action", key="stop_action"):
+            if st.button("⛔  Stop current action", key="stop_action", type="tertiary"):
                 st.session_state.action_running  = False
                 st.session_state._pending_action = ""
                 st.session_state._pending_chat_q = ""
@@ -388,52 +519,117 @@ if r:
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("🧒 Simplify", use_container_width=True, key="btn_simplify", disabled=locked):
+            if st.button("🧒 Simplify", use_container_width=True, key="btn_simplify", disabled=locked, type="secondary"):
                 st.session_state.action_running  = True
                 st.session_state.action_result   = None
                 st.session_state._pending_action = "simplify"
                 st.rerun()
         with col2:
-            if st.button("🐦 Twitter/X thread", use_container_width=True, key="btn_thread", disabled=locked):
+            if st.button("🐦 Twitter/X thread", use_container_width=True, key="btn_thread", disabled=locked, type="secondary"):
                 st.session_state.action_running  = True
                 st.session_state.action_result   = None
                 st.session_state._pending_action = "thread"
                 st.rerun()
         with col3:
-            if st.button("📊 Key bullet points", use_container_width=True, key="btn_bullets", disabled=locked):
+            if st.button("📊 Key bullet points", use_container_width=True, key="btn_bullets", disabled=locked, type="secondary"):
                 st.session_state.action_running  = True
                 st.session_state.action_result   = None
                 st.session_state._pending_action = "bullets"
                 st.rerun()
 
-        chat_lbl = "💬  Close Chat" if st.session_state.chat_open else "💬  Ask / Chat with Report"
-        if st.button(chat_lbl, use_container_width=True, key="btn_chat", disabled=locked):
-            st.session_state.chat_open = not st.session_state.chat_open
+        col4, col5 = st.columns(2)
+        with col4:
+            chat_lbl = "💬  Close Chat" if st.session_state.chat_open else "💬  Ask / Chat with Report"
+            if st.button(chat_lbl, use_container_width=True, key="btn_chat", disabled=locked, type="secondary"):
+                st.session_state.chat_open = not st.session_state.chat_open
+                st.rerun()
+        with col5:
+            if st.button("🔁 Apply Critic & Improve", use_container_width=True, key="btn_apply_critic", disabled=locked, type="secondary"):
+                st.session_state.action_running = True
+                st.session_state.action_result = None
+                st.session_state._pending_action = "apply_critic"
+                st.session_state.show_improve_input = False
+                st.rerun()
+
+        if st.button("✏️ Custom Improvement", use_container_width=True, key="btn_custom_improve", disabled=locked, type="secondary"):
+            st.session_state.show_improve_input = not st.session_state.show_improve_input
             st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+        if st.session_state.show_improve_input:
+            improve_text = st.text_input(
+                "Describe how to improve the report:",
+                key="improve_input",
+                placeholder="e.g. Make it more technical, add statistics, translate to Hindi...",
+            )
+            if st.button("▶ Apply", key="apply_improve", disabled=locked, type="secondary"):
+                if improve_text.strip():
+                    st.session_state._pending_action = "custom_improve"
+                    st.session_state._improve_instructions = improve_text
+                    st.session_state.action_running = True
+                    st.rerun()
+
         # Execute pending quick action
         pending = st.session_state._pending_action
         if st.session_state.action_running and not st.session_state.chat_open and pending:
-            action_map = {
-                "simplify": ("Rewrite this content so a 10-year-old can understand it. Use simple words and fun analogies.", "🧒 Simplified Version"),
-                "thread":   ("Convert this into a compelling Twitter/X thread. Number each tweet. Max 280 chars each. Start with a strong hook.", "🐦 Twitter/X Thread"),
-                "bullets":  ("Extract the 5–7 most important insights as concise, numbered bullet points.", "📊 Key Bullet Points"),
-            }
-            sys_p, lbl = action_map[pending]
-            with st.spinner(f"Running: {lbl}…"):
-                st.session_state.action_result  = run_action(sys_p, base_content)
-                st.session_state.action_label   = lbl
-            st.session_state.action_running  = False
-            st.session_state._pending_action = ""
-            st.rerun()
+            if pending == "apply_critic":
+                with st.spinner("Applying critic feedback and rewriting report..."):
+                    result = improve_report(
+                        session_id=st.session_state.active_session_id,
+                        instructions="",
+                        use_critic=True,
+                    )
+                    st.session_state.results["writer"] = result["report"]
+                    st.session_state.results["report"] = result["report"]
+                    st.session_state.results["critic"] = result["feedback"]
+                    st.session_state.results["feedback"] = result["feedback"]
+                    st.session_state.results["current_version"] = result["version"]
+                    st.session_state.action_running = False
+                    st.session_state._pending_action = ""
+                    st.session_state.show_improve_input = False
+                    st.success(f"✅ Report improved! Now at version v{result['version']}")
+                    st.rerun()
+
+            if pending == "custom_improve":
+                instructions = st.session_state.get("_improve_instructions", "")
+                with st.spinner("Rewriting report..."):
+                    result = improve_report(
+                        session_id=st.session_state.active_session_id,
+                        instructions=instructions,
+                        use_critic=False,
+                    )
+                    st.session_state.results["writer"] = result["report"]
+                    st.session_state.results["report"] = result["report"]
+                    st.session_state.results["critic"] = result["feedback"]
+                    st.session_state.results["feedback"] = result["feedback"]
+                    st.session_state.results["current_version"] = result["version"]
+                    st.session_state.action_running = False
+                    st.session_state._pending_action = ""
+                    st.session_state._improve_instructions = ""
+                    st.session_state.show_improve_input = False
+                    st.success(f"✅ Done! Now at version v{result['version']}")
+                    st.rerun()
+
+            if pending in {"simplify", "thread", "bullets"}:
+                action_map = {
+                    "simplify": ("Rewrite this content so a 10-year-old can understand it. Use simple words and fun analogies.", "🧒 Simplified Version"),
+                    "thread":   ("Convert this into a compelling Twitter/X thread. Number each tweet. Max 280 chars each. Start with a strong hook.", "🐦 Twitter/X Thread"),
+                    "bullets":  ("Extract the 5–7 most important insights as concise, numbered bullet points.", "📊 Key Bullet Points"),
+                }
+                sys_p, lbl = action_map[pending]
+                with st.spinner(f"Running: {lbl}…"):
+                    st.session_state.action_result  = run_action(sys_p, base_content)
+                    st.session_state.action_label   = lbl
+                st.session_state.action_running  = False
+                st.session_state._pending_action = ""
+                st.rerun()
 
         if st.session_state.get("action_result"):
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="result-panel"><div class="result-panel-title">{st.session_state.action_label}</div></div>', unsafe_allow_html=True)
             st.markdown(st.session_state.action_result)
-            if st.button("🗑 Clear result", key="clear_action"):
+            if st.button("🗑 Clear result", key="clear_action", type="tertiary"):
                 st.session_state.action_result = None
                 st.session_state.action_label  = ""
                 st.rerun()
@@ -475,7 +671,7 @@ if r:
                     placeholder='"Translate to Hindi" · "Find weaknesses" · "Tell me more about point 3"',
                     label_visibility="collapsed", disabled=locked)
             with col_send:
-                send = st.button("Send ➤", key="chat_send", use_container_width=True, disabled=locked)
+                send = st.button("Send ➤", key="chat_send", use_container_width=True, disabled=locked, type="primary")
 
             if send and user_q.strip():
                 st.session_state.action_running  = True
@@ -498,7 +694,7 @@ if r:
                 st.rerun()
 
             if st.session_state.chat_history:
-                if st.button("🗑 Clear chat", key="clear_chat"):
+                if st.button("🗑 Clear chat", key="clear_chat", type="tertiary"):
                     st.session_state.chat_history = []
                     if st.session_state.active_session_id:
                         clear_chat_history(st.session_state.active_session_id)

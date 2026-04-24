@@ -6,8 +6,12 @@ import requests
 import wikipedia
 import yfinance as yf
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
 from langchain.tools import tool
+
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 
 USER_AGENTS = [
@@ -23,7 +27,7 @@ USER_AGENTS = [
 def web_search(query: str) -> str:
     """Search the web for recent and reliable information. Returns titles, URLs and snippets."""
     try:
-        results = DDGS().text(query, max_results=5, timelimit="m")
+        results = DDGS().text(query, max_results=5, timelimit="y")
         out = []
         for result in results:
             out.append(
@@ -229,29 +233,6 @@ def _scrape_with_jina(url: str) -> str | None:
     return None
 
 
-def _scrape_with_playwright(url: str) -> str | None:
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return None
-
-    browser = None
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=15000)
-            page.wait_for_load_state("networkidle", timeout=10000)
-            text = page.inner_text("body")[:4000]
-            if len(text.strip()) > 200:
-                print(f"[web_scrape] Tier 2 succeeded for {url}")
-                return text
-    finally:
-        if browser is not None:
-            browser.close()
-    return None
-
-
 def _scrape_with_requests(url: str) -> str | None:
     response = requests.get(
         url,
@@ -263,7 +244,7 @@ def _scrape_with_requests(url: str) -> str | None:
         tag.decompose()
     text = soup.get_text(separator=" ", strip=True)[:4000]
     if len(text.strip()) > 100:
-        print(f"[web_scrape] Tier 3 succeeded for {url}")
+        print(f"[web_scrape] Tier 2 succeeded for {url}")
         return text
     return None
 
@@ -271,7 +252,7 @@ def _scrape_with_requests(url: str) -> str | None:
 @tool
 def web_scrape(url: str) -> str:
     """Scrape and return clean text content from a URL. Handles JS-heavy pages automatically."""
-    for scraper in (_scrape_with_jina, _scrape_with_playwright, _scrape_with_requests):
+    for scraper in (_scrape_with_jina, _scrape_with_requests):
         try:
             text = scraper(url)
             if text:

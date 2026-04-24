@@ -228,3 +228,71 @@ Be specific, cite details from the report where relevant, and stay focused on th
 ])
 
 chat_chain = chat_prompt | llm | StrOutputParser()
+
+
+query_decomposer_prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a research query analyzer. Given a research topic,
+generate 3 distinct search angles that together would cover the topic comprehensively.
+
+Respond ONLY with a JSON object in this exact format, no explanation:
+{{
+  "primary": "main search query",
+  "secondary": "different angle or subtopic query",
+  "tertiary": "recent news or latest developments query"
+}}"""),
+    ("human", "Topic: {topic}")
+])
+
+query_decomposer_chain = query_decomposer_prompt | llm | StrOutputParser()
+
+
+evaluator_prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a strict research data quality evaluator.
+Evaluate whether the gathered research data is sufficient to write
+a high-quality, accurate report.
+
+Score the data on these criteria:
+- Relevance: Is the data related to the topic at all? (0-25 points)
+- Coverage: Does it cover at least 2 angles? (0-25 points)
+- Recency: Is there any recent information? (0-25 points)
+- Depth: Is there more than surface-level snippets? (0-25 points)
+
+Respond ONLY with a JSON object, no explanation:
+{{
+  "score": <total 0-100>,
+  "relevance": <0-25>,
+  "coverage": <0-25>,
+  "recency": <0-25>,
+  "depth": <0-25>,
+  "passed": <true if score >= 40, false otherwise>,
+  "missing": "<one sentence: what key information is missing>",
+  "retry_query": "<if not passed: a better search query to fill the gap, else empty string>"
+}}"""),
+    ("human", """Topic: {topic}
+
+Gathered data:
+{data}""")
+])
+
+evaluator_chain = evaluator_prompt | llm | StrOutputParser()
+
+
+improver_prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are an expert research writer tasked with improving
+an existing research report based on specific instructions.
+Maintain the same structure (Introduction, Key Findings, Conclusion, Sources)
+but improve the content according to the instructions.
+Be detailed, factual and professional."""),
+    ("human", """Original report:
+{report}
+
+Critic feedback:
+{feedback}
+
+Improvement instructions:
+{instructions}
+
+Write the improved version of the complete report:""")
+])
+
+improver_chain = improver_prompt | llm | StrOutputParser()

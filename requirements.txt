@@ -8,12 +8,10 @@ langchain-openai>=0.1.0
 openai>=1.30.0
 
 # Search + knowledge tools
-duckduckgo-search
+ddgs
 wikipedia
 arxiv
 yfinance
-# optional: pip install playwright && playwright install chromium
-playwright
 
 # Web scraping
 beautifulsoup4>=4.12.0
