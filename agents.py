@@ -112,7 +112,15 @@ from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from tools import web_search , web_scrape 
+from tools import (
+    arxiv_search,
+    financial_data,
+    news_search,
+    weather_search,
+    web_scrape,
+    web_search,
+    wikipedia_search,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -124,9 +132,12 @@ llm = ChatOpenAI(model = "gpt-4o-mini",temperature=0)
 classifier_prompt = ChatPromptTemplate.from_messages([
     ("system", """You are a query router. Decide if a query needs deep research or can be answered directly.
 
-Reply with ONLY one of these two words:
-- SIMPLE  → for greetings, definitions, quick facts, math, basic how-to questions
-- RESEARCH → for topics needing current data, analysis, comparisons, trends, or detailed reports
+Reply with ONLY one of these five words:
+- SIMPLE    → greetings, definitions, math, basic how-to
+- FINANCE   → stock prices, crypto, gold, forex, market data
+- NEWS      → current events, breaking news, today's updates
+- ACADEMIC  → research papers, scientific topics, ML, physics
+- RESEARCH  → everything else needing deep multi-source analysis
 
 No explanation. One word only."""),
     ("human", "Query: {query}")
@@ -138,7 +149,7 @@ classifier_chain = classifier_prompt | llm | StrOutputParser()
 def build_search_agent():
     return create_agent(
         model = llm,
-        tools= [web_search]
+        tools= [web_search, news_search, wikipedia_search, arxiv_search, financial_data, weather_search]
     )
 
 #2nd agent 

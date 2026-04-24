@@ -16,8 +16,8 @@ def _normalize_state(raw_state):
     return state
 
 
-def run_research(topic: str) -> dict:
-    raw_state = run_research_pipeline(topic)
+def run_research(topic: str, progress_callback=None) -> dict:
+    raw_state = run_research_pipeline(topic, progress_callback=progress_callback)
     session = create_session(topic, raw_state.get("query_type"))
     update_session(
         session.id,

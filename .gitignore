@@ -18,3 +18,9 @@ Thumbs.db
 detail.md
 research_history.json
 researchmind.db
+
+
+api_pid.txt
+api_stdout.log
+api_stderr.log
+*.log
